@@ -1,0 +1,55 @@
+#Dockerfile for getting Centos7 and adding JDK 1.8 and Jboss EAP7 package 
+
+# get base centos 7 image 
+FROM centos:7
+
+USER root 
+# Installs packages necessary to run JBOSS
+## Added ssh and logrotate for remote and space managebility  for later use.
+RUN yum update -y && yum -y install xmlstarlet saxon augeas bsdtar unzip logrotate openssh-server && yum clean all
+
+# Create a user and group used to launch processes
+# making it easier to use volumes at /opt/jboss (no permission issues) -v option at build 
+
+RUN groupadd -r jboss -g 1000 && \
+    useradd -u 1000 -r -g jboss -m -d /opt/jboss -s /sbin/nologin -c "JBoss Srv User" jboss && \
+    chmod 755 /opt/jboss
+
+# Set the working directory to jboss' user home directory
+WORKDIR /opt/jboss
+
+### Install necessary packages ( JDK or DEVEL-JDK )
+RUN yum -y install java-1.8.0-openjdk && yum clean all
+### For a jdk 1.8 devel pkg  ( hash out above ) 
+# RUN yum -y install java-1.8.0-openjdk-devel && yum clean all
+
+# Add the JBOSS distribution to $HOME, and make jboss user the owner of the extracted tar content
+# ( Here eap7b downloaded and shared internally on http image)
+
+RUN cd /opt/jboss \
+    && rm -rf *.zip \
+    && curl -O http://repo.a2zlogix.com/repo/ASG/jboss-eap-7.0.0.Beta.zip \
+    && unzip jboss-eap-7.0.0.Beta.zip \
+    && mv jboss-eap-7.0/ eap7b \
+    && rm /opt/jboss/jboss-eap-7.0.0.Beta.zip
+
+# give jboss user permission to $JBOSS Installation
+RUN chown -R jboss:jboss /opt/jboss/eap7b/
+
+# Switch back to jboss user for JBOSS Service Configuration 
+USER jboss
+
+# Set the JBOSS_HOME env variable for startup script to pick up 
+ENV JBOSS_HOME /opt/jboss/eap7b/
+
+# Expose the ports we're interested in
+EXPOSE 8080 8443 9990 22
+
+# ADD Admin User : ASG and Deployment Package 
+RUN /opt/jboss/eap7b/bin/add-user.sh asgadmin ASGadmin01 --silent \ 
+    && cd $JBOSS_HOME\standalone\configuration\deployment \
+    && curl -O http://repo.a2zlogix.com/repo/ASG/ASGProtocol.ear 
+
+# Set the default command to run on boot
+# This will boot JBOSS in the standalone mode and bind to all attached interfaces
+CMD ["$JBOSS_HOME/bin/standalone.sh", "-b", "0.0.0.0", "-bmanagement", "0.0.0.0"]
